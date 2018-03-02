@@ -220,6 +220,7 @@ func (h *Handler) UserinfoHandler(w http.ResponseWriter, r *http.Request, _ http
 	delete(interim, "c_hash")
 	delete(interim, "auth_time")
 	delete(interim, "iat")
+	delete(interim, "rat")
 	delete(interim, "exp")
 
 	h.H.Write(w, r, interim)
@@ -488,6 +489,17 @@ func (h *Handler) AuthHandler(w http.ResponseWriter, r *http.Request, _ httprout
 		return
 	}
 
+        errorParam, present := r.URL.Query()["error"]
+	if present {
+	  fmt.Printf("HIIIII: %s\n", errorParam[0])
+          if errorParam[0] == "login_required" {
+             err := errors.New("Login required!!!!!!!!!!!!!!")
+             pkg.LogError(err, h.L)
+             h.writeAuthorizeError(w, authorizeRequest, errors.Wrapf(fosite.ErrLoginRequired, "Login required: %s", err))
+	          return
+          }
+	}
+
 	// A session_token will be available if the user was authenticated an gave consent
 	consent := authorizeRequest.GetRequestForm().Get("consent")
 	if consent == "" {
@@ -566,6 +578,13 @@ func (h *Handler) redirectToConsent(w http.ResponseWriter, r *http.Request, auth
 	p := h.ConsentURL
 	q := p.Query()
 	q.Set("consent", challenge)
+
+	vals := r.URL.Query()
+        if vals["prompt"] != nil {
+           fmt.Printf("Setting prompt params to %s", vals["prompt"][0])
+           q.Set("prompt", vals["prompt"][0])
+        }
+
 	p.RawQuery = q.Encode()
 
 	if err := cookie.Save(r, w); err != nil {

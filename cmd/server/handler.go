@@ -16,7 +16,9 @@ package server
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,6 +60,21 @@ func parseCorsOptions() cors.Options {
 		MaxAge:           maxAge,
 		Debug:            debug,
 	}
+}
+
+func StandardCipherSuites() []uint16 {
+     return []uint16{
+         tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+         tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+ 	 tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+         tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+	 tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+	 tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+	 tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+	 tls.TLS_RSA_WITH_AES_128_CBC_SHA256, // Ref: https://github.com/golang/go/issues/20213 is now fixed									  tls.TLS_RSA_WITH_AES_128_CBC_SHA,       	 
+         tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,	
+	 tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+     }
 }
 
 func RunHost(c *config.Config) func(cmd *cobra.Command, args []string) {
@@ -110,11 +127,39 @@ func RunHost(c *config.Config) func(cmd *cobra.Command, args []string) {
 		n.UseHandler(router)
 		corsHandler := cors.New(parseCorsOptions()).Handler(n)
 
+
+		// load certs
+		certs := x509.NewCertPool()
+		pemPaths := []string{
+		   "/etc/pki/tls/certs/oauth_aws_us_west_2_ca.pem",
+		   "/etc/pki/tls/certs/yahoo_legacy_aws_ca.pem",
+		   "/etc/pki/tls/certs/yahoo_athenz_gqv_ca.pem",
+		   "/etc/pki/tls/certs/yahoo_athenz_bfv_ca.pem",
+                }
+				
+		for _, pemPath := range pemPaths {
+		  pemData, pemerr := ioutil.ReadFile(pemPath)
+		  if pemerr != nil {
+		     logger.Fatalln("Failed to load CA cert: %s", pemPath)
+	 	  }
+		  load_ok := certs.AppendCertsFromPEM(pemData)
+		  logger.Infoln("cert %s load result: %s", pemPath, load_ok)
+		}
+
+                fmt.Printf("Pool Subjects : %x\n", certs.Subjects())
+
 		var srv = graceful.WithDefaults(&http.Server{
 			Addr:    c.GetAddress(),
 			Handler: context.ClearHandler(corsHandler),
 			TLSConfig: &tls.Config{
 				Certificates: []tls.Certificate{getOrCreateTLSCertificate(cmd, c)},
+				ClientAuth: tls.VerifyClientCertIfGiven,
+				ClientCAs: certs,
+				NextProtos: []string{"h2", "http/1.1"},
+				CipherSuites: StandardCipherSuites(),
+				PreferServerCipherSuites: true,
+				MinVersion: tls.VersionTLS12,
+				SessionTicketsDisabled: true,
 			},
 		})
 
